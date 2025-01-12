@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
 	"sync"
 
 	"UDPRainbowBridge/utils"
@@ -36,19 +37,33 @@ var (
 
 	// 本地连接端口
 	remote_con_socket *net.UDPConn
+
+	// mtu
+	mtu int
 )
 
 // 创建监听端口列表
-func create_cluster_listen_socket() {
+func create_cluster_listen_socket(force_listen_port []string) {
 	// 初始化数组
 	listen_record_sockets = make([]*utils.RecordSocket, max_listen_cnt)
 	listen_record_add_mutex = make([]*sync.Mutex, max_listen_cnt)
 
 	// 循环最大监听数量次数，监听对应端口
 	for i := 0; i < max_listen_cnt; i++ {
+
+		port := base_listen_port + i
+
+		// 根据force_listen_port长度判断是否使用
+		if len(force_listen_port) > i {
+			force_port, err := strconv.Atoi(force_listen_port[i])
+			if err == nil {
+				port = force_port
+			}
+		}
+
 		addr := &net.UDPAddr{
 			IP:   net.ParseIP(listen_ip),
-			Port: base_listen_port + i,
+			Port: port,
 		}
 
 		// 监听
@@ -73,7 +88,7 @@ func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync
 	defer recordSocket.Socket.Close()
 
 	// 缓存
-	buf := make([]byte, 1350)
+	buf := make([]byte, mtu)
 
 	// 循环读取数据
 	for {
@@ -150,7 +165,7 @@ func create_remote_socket() {
 
 // 监听远端输入
 func handle_remote_socket_info() {
-	buffer := make([]byte, 1350)
+	buffer := make([]byte, mtu)
 
 	for {
 		n, _, err := remote_con_socket.ReadFromUDP(buffer)
@@ -199,14 +214,15 @@ func handle_remote_socket_info() {
 	}
 }
 
-func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_port int) {
+func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_port int, _mtu int, _force_local_port_list []string) {
 	remote_ip = _remote_ip
 	remote_port = _remote_port
 	listen_ip = _listen_ip
 	base_listen_port = _base_listen_port
+	mtu = _mtu
 
 	// 创建本地监听端口套接字群
-	create_cluster_listen_socket()
+	create_cluster_listen_socket(_force_local_port_list)
 
 	// 本地监听端口监听信息
 	for i := 0; i < max_listen_cnt; i++ {

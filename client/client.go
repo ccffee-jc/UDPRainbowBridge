@@ -48,6 +48,9 @@ var (
 
 	// 命中统计锁
 	hit_mutex = sync.Mutex{}
+
+	// mtu
+	mtu int
 )
 
 // 获取所有活动的网络接口
@@ -120,7 +123,7 @@ func select_inter_face(inter_faces_list []InterfaceAddress) []string {
 }
 
 // 使用传入的字符串地址创建udp套接字
-func create_cluster_socket(addr []string) []*net.UDPConn {
+func create_cluster_socket(addr []string, force_port_list []string) []*net.UDPConn {
 	var sockets []*net.UDPConn
 	for index, local_ip := range addr {
 		// 本地地址
@@ -129,10 +132,20 @@ func create_cluster_socket(addr []string) []*net.UDPConn {
 			Port: 0,
 		}
 
+		port := target_port_base + index
+
+		// 判断force_port_list的长度来决定是否使用
+		if len(force_port_list) > index {
+			force_port, err := strconv.Atoi(force_port_list[index])
+			if err == nil {
+				port = force_port
+			}
+		}
+
 		// 远程地址
 		remoteAddr := &net.UDPAddr{
 			IP:   net.ParseIP(target_ip),
-			Port: target_port_base + index,
+			Port: port,
 		}
 
 		// 创建链接
@@ -155,7 +168,7 @@ func handle_cluster_socket_info(socket *net.UDPConn, index int) {
 	defer socket.Close()
 
 	// 缓存
-	buf := make([]byte, 1350)
+	buf := make([]byte, mtu)
 
 	// 循环读取数据
 	for {
@@ -254,7 +267,7 @@ func handle_local_socket_info() {
 	defer local_addr_record.Socket.Close()
 
 	// 缓存
-	buf := make([]byte, 1350)
+	buf := make([]byte, mtu)
 
 	// 循环读取数据
 	for {
@@ -301,34 +314,37 @@ func print_hit_counts() {
 	}
 }
 
-func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_port int) {
+func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_port int, _mtu int, _force_local_ip_list []string, _force_local_port_list []string) {
 	target_ip = _target_ip
 	target_port_base = _target_port_base
 	listen_ip = _listen_ip
 	listen_port = _listen_port
+	mtu = _mtu
 
-	// 获取所有活动的网络接口
-	inter_faces_list := get_all_inter_face()
-	if len(inter_faces_list) == 0 {
-		fmt.Println("未找到活动的网络接口。")
-		return
-	}
+	if len(_force_local_ip_list) == 0 {
+		// 获取所有活动的网络接口
+		inter_faces_list := get_all_inter_face()
+		if len(inter_faces_list) == 0 {
+			fmt.Println("未找到活动的网络接口。")
+			return
+		}
 
-	// 显示可用的网络接口
-	fmt.Println("可用的网络接口:")
-	for idx, inter := range inter_faces_list {
-		fmt.Printf("%d: %s - %s\n", idx, inter.NAME, inter.IPV4)
-	}
+		// 显示可用的网络接口
+		fmt.Println("可用的网络接口:")
+		for idx, inter := range inter_faces_list {
+			fmt.Printf("%d: %s - %s\n", idx, inter.NAME, inter.IPV4)
+		}
 
-	// 用户选择要使用的接口
-	local_addr_list := select_inter_face(inter_faces_list)
-	if len(local_addr_list) == 0 {
-		fmt.Println("未选择有效的网络接口。")
-		return
+		// 用户选择要使用的接口
+		_force_local_ip_list = select_inter_face(inter_faces_list)
+		if len(_force_local_ip_list) == 0 {
+			fmt.Println("未选择有效的网络接口。")
+			return
+		}
 	}
 
 	// 用选择的接口建立udp套接字
-	sockets = create_cluster_socket(local_addr_list)
+	sockets = create_cluster_socket(_force_local_ip_list, _force_local_port_list)
 	hit_counts = make([]int, len(sockets))
 
 	for index := range hit_counts {
