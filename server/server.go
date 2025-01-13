@@ -6,6 +6,7 @@ import (
 	"os"
 	"strconv"
 	"sync"
+	"time"
 
 	"UDPRainbowBridge/utils"
 )
@@ -40,6 +41,12 @@ var (
 
 	// mtu
 	mtu int
+
+	// 命中包统计
+	hit_counts []int
+
+	// 命中统计锁
+	hit_mutex = sync.Mutex{}
 )
 
 // 创建监听端口列表
@@ -54,10 +61,17 @@ func create_cluster_listen_socket(force_listen_port []string) {
 		port := base_listen_port + i
 
 		// 根据force_listen_port长度判断是否使用
-		if len(force_listen_port) > i {
-			force_port, err := strconv.Atoi(force_listen_port[i])
-			if err == nil {
-				port = force_port
+		if len(force_listen_port) > 0 {
+			if len(force_listen_port) > i {
+				force_port, err := strconv.Atoi(force_listen_port[i])
+				if err == nil {
+					port = force_port
+				} else {
+					fmt.Println("强制端口转换失败:", err)
+					continue
+				}
+			} else {
+				continue
 			}
 		}
 
@@ -84,7 +98,7 @@ func create_cluster_listen_socket(force_listen_port []string) {
 	}
 }
 
-func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync.Mutex) {
+func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync.Mutex, index int) {
 	defer recordSocket.Socket.Close()
 
 	// 缓存
@@ -128,6 +142,11 @@ func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync
 
 		// 释放锁
 		listen_record_index_mutex.Unlock()
+
+		// 增加命中统计
+		hit_mutex.Lock()
+		hit_counts[index]++
+		hit_mutex.Unlock()
 
 		// 转发到远程端口中
 		if remote_con_socket != nil {
@@ -214,6 +233,21 @@ func handle_remote_socket_info() {
 	}
 }
 
+func print_hit_counts() {
+	for {
+		// 间隔五秒输出一次
+		time.Sleep(5 * time.Second)
+
+		// 输出统计信息
+		hit_mutex.Lock()
+		for index, count := range hit_counts {
+			fmt.Printf("套接字 %d 命中包数量: %d\n", index, count)
+			hit_counts[index] = 0
+		}
+		hit_mutex.Unlock()
+	}
+}
+
 func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_port int, _mtu int, _force_local_port_list []string) {
 	remote_ip = _remote_ip
 	remote_port = _remote_port
@@ -224,11 +258,23 @@ func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_
 	// 创建本地监听端口套接字群
 	create_cluster_listen_socket(_force_local_port_list)
 
+	hit_counts = make([]int, max_listen_cnt)
+
+	for index := range hit_counts {
+		hit_counts[index] = 0
+	}
+
 	// 本地监听端口监听信息
 	for i := 0; i < max_listen_cnt; i++ {
 		recordSocket := listen_record_sockets[i]
 		addMutex := listen_record_add_mutex[i]
-		go handle_cluster_socket_info(recordSocket, addMutex)
+
+		// 判断值是否有效
+		if recordSocket == nil {
+			continue
+		}
+
+		go handle_cluster_socket_info(recordSocket, addMutex, i)
 	}
 
 	// 创建本地转发端口
@@ -238,6 +284,8 @@ func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_
 	go handle_remote_socket_info()
 
 	fmt.Println("程序启动，等待客户端接入")
+
+	go print_hit_counts()
 
 	// 阻止主函数退出
 	select {}

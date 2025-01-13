@@ -123,7 +123,7 @@ func select_inter_face(inter_faces_list []InterfaceAddress) []string {
 }
 
 // 使用传入的字符串地址创建udp套接字
-func create_cluster_socket(addr []string, force_port_list []string) []*net.UDPConn {
+func create_cluster_socket(addr []string, force_port_list []string, force_remote_ip_list []string) []*net.UDPConn {
 	var sockets []*net.UDPConn
 	for index, local_ip := range addr {
 		// 本地地址
@@ -133,6 +133,7 @@ func create_cluster_socket(addr []string, force_port_list []string) []*net.UDPCo
 		}
 
 		port := target_port_base + index
+		ip := net.ParseIP(target_ip)
 
 		// 判断force_port_list的长度来决定是否使用
 		if len(force_port_list) > index {
@@ -142,9 +143,14 @@ func create_cluster_socket(addr []string, force_port_list []string) []*net.UDPCo
 			}
 		}
 
+		// 判断force_remote_ip_list的长度来决定是否使用
+		if len(force_remote_ip_list) > index {
+			ip = net.ParseIP(force_remote_ip_list[index])
+		}
+
 		// 远程地址
 		remoteAddr := &net.UDPAddr{
-			IP:   net.ParseIP(target_ip),
+			IP:   ip,
 			Port: port,
 		}
 
@@ -314,7 +320,8 @@ func print_hit_counts() {
 	}
 }
 
-func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_port int, _mtu int, _force_local_ip_list []string, _force_local_port_list []string) {
+func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_port int, _mtu int, _force_local_ip_list []string, _force_local_port_list []string,
+	_remote_ip_list []string) {
 	target_ip = _target_ip
 	target_port_base = _target_port_base
 	listen_ip = _listen_ip
@@ -344,7 +351,7 @@ func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_
 	}
 
 	// 用选择的接口建立udp套接字
-	sockets = create_cluster_socket(_force_local_ip_list, _force_local_port_list)
+	sockets = create_cluster_socket(_force_local_ip_list, _force_local_port_list, _remote_ip_list)
 	hit_counts = make([]int, len(sockets))
 
 	for index := range hit_counts {

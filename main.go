@@ -23,12 +23,20 @@ func main() {
 	// 聚合指定的端口（和base_listen_port冲突）
 	var force_listen_port_str string
 
+	// 目标端口列表（客户端用）
+	var remote_port_list_str string
+
+	// 目标ip列表（客户端用）
+	var remote_ip_list_str string
+
 	var mode string
 
 	flag.StringVar(&sc, "sc", "s", "s: 服务器模式, c: 客户端模式")
 
 	flag.StringVar(&remote_ip, "r", "127.0.0.1", "目标地址")
+	flag.StringVar(&remote_ip_list_str, "rl", "", "目标地址列表，例子：192.168.2.110:192.168.3.110")
 	flag.IntVar(&remote_port, "rp", 60101, "目标起始端口")
+	flag.StringVar(&remote_port_list_str, "rpl", "", "目标端口列表，例子：60101:60102:60103")
 	flag.StringVar(&listen_ip, "l", "0.0.0.0", "监听地址")
 	flag.IntVar(&base_listen_port, "lp", 60100, "监听端口")
 
@@ -40,6 +48,7 @@ func main() {
 
 	flag.Parse()
 
+	// 服务器监听地址，客户端
 	force_listen_port := strings.Split(force_listen_port_str, ":")
 
 	if sc == "s" {
@@ -47,7 +56,9 @@ func main() {
 	} else if sc == "c" {
 		// 使用:分割client_local_ip_str获取客户端指定ip列表
 		client_local_ip_list := strings.Split(client_local_ip_str, ":")
-		client.Start(remote_ip, remote_port, listen_ip, base_listen_port, mtu, client_local_ip_list, force_listen_port)
+		// 使用:分割remote_port_list_str获取目标ip列表
+		remote_ip_list := strings.Split(remote_ip_list_str, ":")
+		client.Start(remote_ip, remote_port, listen_ip, base_listen_port, mtu, client_local_ip_list, force_listen_port, remote_ip_list)
 	} else {
 		fmt.Println("无效模式")
 	}
