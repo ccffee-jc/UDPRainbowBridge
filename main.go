@@ -1,65 +1,59 @@
 package main
 
 import (
+	"UDPRainbowBridge/client"
+	"UDPRainbowBridge/server"
 	"flag"
 	"fmt"
 	"strings"
-
-	"UDPRainbowBridge/client"
-	"UDPRainbowBridge/server"
 )
 
 func main() {
-	var sc string
-	var remote_ip string
-	var remote_port int
-	var listen_ip string
-	var base_listen_port int
-	var mtu int
-
-	// 客户端指定ip列表
-	var client_local_ip_str string
-
-	// 聚合指定的端口（和base_listen_port冲突）
-	var force_listen_port_str string
-
-	// 目标端口列表（客户端用）
-	var remote_port_list_str string
-
-	// 目标ip列表（客户端用）
-	var remote_ip_list_str string
-
+	var s bool
+	var c bool
+	var m int
 	var mode string
+	var r string
+	var l string
+	var send string
 
-	flag.StringVar(&sc, "sc", "s", "s: 服务器模式, c: 客户端模式")
+	// 规划参数：将ip与端口统一，且重复类型参数只留一个
+	// 转发地址，参数名称：r 参数值示例：192.168.2.3:8080;192.168.2.110:8080
+	// 监听地址，参数名称: l 参数值示例：0.0.0.0:9000;0.0.0.0:90001:192.168.2.3:9002
+	// 发送地址（客户端用，local地址）， 参数名称：send 参数值192.168.100.1;192.168.99.1  不用带端口！！
+	// -s 服务端模式
+	// -c 客户端模式
+	// -m mtu值设置
+	// -mode 模式选择 mode1: 多倍发包模式，mode2: 自动选择线路模式，mode3:链路聚合模式
+	flag.BoolVar(&s, "s", false, "服务端模式")
+	flag.BoolVar(&c, "c", false, "客户端模式")
+	flag.StringVar(&mode, "mode", "mode1", "mode1: 多倍发包模式，mode2: 自动选择线路模式，mode3:链路聚合模式")
+	flag.IntVar(&m, "mtu", 1492, "可选，mtu，最大包体支持，默认：1492")
 
-	flag.StringVar(&remote_ip, "r", "127.0.0.1", "目标地址")
-	flag.StringVar(&remote_ip_list_str, "rl", "", "目标地址列表，例子：192.168.2.110:192.168.3.110")
-	flag.IntVar(&remote_port, "rp", 60101, "目标起始端口")
-	flag.StringVar(&remote_port_list_str, "rpl", "", "目标端口列表，例子：60101:60102:60103")
-	flag.StringVar(&listen_ip, "l", "0.0.0.0", "监听地址")
-	flag.IntVar(&base_listen_port, "lp", 60100, "监听端口")
-
-	flag.StringVar(&mode, "mode", "mode1", "mode1: 多倍发包模式，mode2: 自动选择线路模式")
-	flag.StringVar(&client_local_ip_str, "local_ip_list", "", "可选，客户端指定ip列表，例子：192.168.2.110:192.168.3.110")
-	flag.IntVar(&mtu, "mtu", 1492, "可选，mtu，最大包体支持，默认：1492")
-
-	flag.StringVar(&force_listen_port_str, "force_listen_port", "", "可选，强制聚合指定的端口，和base_listen_port冲突，例子：60100:60101")
+	flag.StringVar(&r, "r", "", "转发地址 服务端此参数只能有一个地址，客户端多个 参数值示例：192.168.2.3:8080;192.168.2.110:8080")
+	flag.StringVar(&l, "l", "", "监听地址 服务端此参数有多个，客户端单个 参数值示例：0.0.0.0:9000;0.0.0.0:90001:192.168.2.3:9002")
+	flag.StringVar(&send, "send", "", "发送地址 客户端用 参数值192.168.100.1;192.168.99.1  不用带端口！！")
 
 	flag.Parse()
 
-	// 服务器监听地址，客户端
-	force_listen_port := strings.Split(force_listen_port_str, ":")
+	// 解析地址参数 使用;分割地址
+	// 转发地址
+	remote_ip_list := strings.Split(r, ";")
+	// 监听地址
+	listen_ip_list := strings.Split(l, ";")
 
-	if sc == "s" {
-		server.Start(remote_ip, remote_port, listen_ip, base_listen_port, mtu, force_listen_port)
-	} else if sc == "c" {
-		// 使用:分割client_local_ip_str获取客户端指定ip列表
-		client_local_ip_list := strings.Split(client_local_ip_str, ":")
-		// 使用:分割remote_port_list_str获取目标ip列表
-		remote_ip_list := strings.Split(remote_ip_list_str, ":")
-		client.Start(remote_ip, remote_port, listen_ip, base_listen_port, mtu, client_local_ip_list, force_listen_port, remote_ip_list)
-	} else {
-		fmt.Println("无效模式")
+	if s {
+		// 服务器模式
+		server.Start(remote_ip_list, listen_ip_list, m, mode)
+	} else if c {
+		// 客户端模式
+
+		// 发送地址
+		client_local_ip_list := strings.Split(send, ";")
+
+		client.Start(remote_ip_list, listen_ip_list, client_local_ip_list, m, mode)
 	}
+
+	// 没有输入参数
+	fmt.Println("无效模式")
 }

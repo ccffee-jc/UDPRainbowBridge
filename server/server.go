@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"strconv"
 	"sync"
 	"time"
 
@@ -12,21 +11,6 @@ import (
 )
 
 var (
-	// 本地监听ip
-	listen_ip string
-
-	// 本地监听基准端口
-	base_listen_port int
-
-	// 最大监听数量
-	max_listen_cnt = 4
-
-	// 远程转发Ip
-	remote_ip string
-
-	// 远程转发端口
-	remote_port int
-
 	// 监听端口组
 	listen_record_sockets []*utils.RecordSocket
 
@@ -39,9 +23,6 @@ var (
 	// 本地连接端口
 	remote_con_socket *net.UDPConn
 
-	// mtu
-	mtu int
-
 	// 命中包统计
 	hit_counts []int
 
@@ -50,40 +31,25 @@ var (
 )
 
 // 创建监听端口列表
-func create_cluster_listen_socket(force_listen_port []string) {
+func create_cluster_listen_socket(listen_ip_list []string) {
 	// 初始化数组
-	listen_record_sockets = make([]*utils.RecordSocket, max_listen_cnt)
-	listen_record_add_mutex = make([]*sync.Mutex, max_listen_cnt)
+	listen_record_sockets = make([]*utils.RecordSocket, len(listen_ip_list))
+	listen_record_add_mutex = make([]*sync.Mutex, len(listen_ip_list))
 
 	// 循环最大监听数量次数，监听对应端口
-	for i := 0; i < max_listen_cnt; i++ {
+	for i := 0; i < len(listen_ip_list); i++ {
 
-		port := base_listen_port + i
+		addr, err_resolve := net.ResolveUDPAddr("udp", listen_ip_list[i])
 
-		// 根据force_listen_port长度判断是否使用
-		if len(force_listen_port) > 0 {
-			if len(force_listen_port) > i {
-				force_port, err := strconv.Atoi(force_listen_port[i])
-				if err == nil {
-					port = force_port
-				} else {
-					fmt.Println("强制端口转换失败:", err)
-					continue
-				}
-			} else {
-				continue
-			}
-		}
-
-		addr := &net.UDPAddr{
-			IP:   net.ParseIP(listen_ip),
-			Port: port,
+		if err_resolve != nil {
+			fmt.Printf("解析地址 %s 失败: %v\n", listen_ip_list[i], err_resolve)
+			continue
 		}
 
 		// 监听
-		conn, err := net.ListenUDP("udp", addr)
-		if err != nil {
-			fmt.Printf("监听UDP套接字 %s 失败: %v\n", addr.String(), err)
+		conn, err_listen := net.ListenUDP("udp", addr)
+		if err_listen != nil {
+			fmt.Printf("监听UDP套接字 %s 失败: %v\n", addr.String(), err_listen)
 			continue
 		}
 
@@ -98,7 +64,7 @@ func create_cluster_listen_socket(force_listen_port []string) {
 	}
 }
 
-func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync.Mutex, index int) {
+func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync.Mutex, index int, mtu int) {
 	defer recordSocket.Socket.Close()
 
 	// 缓存
@@ -164,10 +130,12 @@ func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync
 }
 
 // 创建本地转发端口
-func create_remote_socket() {
-	remoteAddr := &net.UDPAddr{
-		IP:   net.ParseIP(remote_ip),
-		Port: remote_port,
+func create_remote_socket(addr string) {
+	remoteAddr, err_resolve := net.ResolveUDPAddr("udp", addr)
+
+	if err_resolve != nil {
+		fmt.Printf("解析地址 %s 失败: %v\n", addr, err_resolve)
+		os.Exit(1)
 	}
 
 	_remote_con_socket, err := net.DialUDP("udp", nil, remoteAddr)
@@ -183,7 +151,7 @@ func create_remote_socket() {
 }
 
 // 监听远端输入
-func handle_remote_socket_info() {
+func handle_remote_socket_info(mtu int) {
 	buffer := make([]byte, mtu)
 
 	for {
@@ -248,24 +216,18 @@ func print_hit_counts() {
 	}
 }
 
-func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_port int, _mtu int, _force_local_port_list []string) {
-	remote_ip = _remote_ip
-	remote_port = _remote_port
-	listen_ip = _listen_ip
-	base_listen_port = _base_listen_port
-	mtu = _mtu
-
+func Start(remote_ip_list []string, listen_ip_list []string, mtu int, mode string) {
 	// 创建本地监听端口套接字群
-	create_cluster_listen_socket(_force_local_port_list)
+	create_cluster_listen_socket(listen_ip_list)
 
-	hit_counts = make([]int, max_listen_cnt)
+	hit_counts = make([]int, len(listen_ip_list))
 
 	for index := range hit_counts {
 		hit_counts[index] = 0
 	}
 
 	// 本地监听端口监听信息
-	for i := 0; i < max_listen_cnt; i++ {
+	for i := 0; i < len(listen_ip_list); i++ {
 		recordSocket := listen_record_sockets[i]
 		addMutex := listen_record_add_mutex[i]
 
@@ -274,14 +236,14 @@ func Start(_remote_ip string, _remote_port int, _listen_ip string, _base_listen_
 			continue
 		}
 
-		go handle_cluster_socket_info(recordSocket, addMutex, i)
+		go handle_cluster_socket_info(recordSocket, addMutex, i, mtu)
 	}
 
 	// 创建本地转发端口
-	create_remote_socket()
+	create_remote_socket(remote_ip_list[0])
 
 	// 监听本地端口输入
-	go handle_remote_socket_info()
+	go handle_remote_socket_info(mtu)
 
 	fmt.Println("程序启动，等待客户端接入")
 

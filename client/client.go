@@ -3,8 +3,6 @@ package client
 import (
 	"fmt"
 	"net"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -25,18 +23,6 @@ var (
 	// 地址锁
 	addr_mutex = sync.Mutex{}
 
-	// 目标ip
-	target_ip string
-
-	// 目标起始端口
-	target_port_base int
-
-	// 监听ip
-	listen_ip string
-
-	// 本地监听端口
-	listen_port int
-
 	// 本地监听套接字与对端端口结构体
 	local_addr_record *utils.RecordSocket
 
@@ -48,110 +34,26 @@ var (
 
 	// 命中统计锁
 	hit_mutex = sync.Mutex{}
-
-	// mtu
-	mtu int
 )
 
-// 获取所有活动的网络接口
-func get_all_inter_face() []InterfaceAddress {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		fmt.Println("获取网络接口失败:", err)
-		return nil
-	}
-
-	var arr []InterfaceAddress
-	for _, inter := range interfaces {
-		// 排除MTU为-1的接口
-		if inter.MTU == -1 {
-			continue
-		}
-		// 排除未启用的接口
-		if inter.Flags&net.FlagUp != net.FlagUp {
-			continue
-		}
-		addrs, err := inter.Addrs()
-		if err != nil || len(addrs) < 1 {
-			continue
-		}
-		// 只处理IPv4地址
-		var v4 string
-		for _, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				continue
-			}
-			if ip.To4() != nil {
-				v4 = ip.String()
-				break
-			}
-		}
-		if v4 == "" {
-			continue
-		}
-		arr = append(arr, InterfaceAddress{
-			NAME: inter.Name,
-			IPV4: v4,
-		})
-	}
-	return arr
-}
-
-// 让用户选择要使用的网络接口
-func select_inter_face(inter_faces_list []InterfaceAddress) []string {
-	var input string
-	fmt.Println("请输入要使用的接口索引，例如 0,1,2:")
-	_, err := fmt.Scanf("%s", &input)
-	if err != nil {
-		fmt.Println("读取输入失败:", err)
-		return nil
-	}
-
-	indices := strings.Split(input, ",")
-	var selected []string
-	for _, str := range indices {
-		str = strings.TrimSpace(str)
-		idx, err := strconv.Atoi(str)
-		if err != nil || idx < 0 || idx >= len(inter_faces_list) {
-			fmt.Printf("无效的索引: %s\n", str)
-			continue
-		}
-		selected = append(selected, inter_faces_list[idx].IPV4)
-	}
-	return selected
-}
-
 // 使用传入的字符串地址创建udp套接字
-func create_cluster_socket(addr []string, force_port_list []string, force_remote_ip_list []string) []*net.UDPConn {
+func create_cluster_socket(remote_addr_list []string, send_addr_list []string) []*net.UDPConn {
 	var sockets []*net.UDPConn
-	for index, local_ip := range addr {
+	for index, local_ip := range send_addr_list {
 		// 本地地址
-		localAddr := &net.UDPAddr{
-			IP:   net.ParseIP(local_ip),
-			Port: 0,
-		}
+		localAddr, err_resolveLocal := net.ResolveUDPAddr("udp", local_ip)
 
-		port := target_port_base + index
-		ip := net.ParseIP(target_ip)
-
-		// 判断force_port_list的长度来决定是否使用
-		if len(force_port_list) > index {
-			force_port, err := strconv.Atoi(force_port_list[index])
-			if err == nil {
-				port = force_port
-			}
-		}
-
-		// 判断force_remote_ip_list的长度来决定是否使用
-		if len(force_remote_ip_list) > index {
-			ip = net.ParseIP(force_remote_ip_list[index])
+		if err_resolveLocal != nil {
+			fmt.Println("解析本地地址失败:", err_resolveLocal)
+			continue
 		}
 
 		// 远程地址
-		remoteAddr := &net.UDPAddr{
-			IP:   ip,
-			Port: port,
+		remoteAddr, err_resolveRemote := net.ResolveUDPAddr("udp", remote_addr_list[index])
+
+		if err_resolveRemote != nil {
+			fmt.Println("解析远程地址失败:", err_resolveRemote)
+			continue
 		}
 
 		// 创建链接
@@ -170,7 +72,7 @@ func create_cluster_socket(addr []string, force_port_list []string, force_remote
 }
 
 // 监听集群套接字信息
-func handle_cluster_socket_info(socket *net.UDPConn, index int) {
+func handle_cluster_socket_info(socket *net.UDPConn, index int, mtu int) {
 	defer socket.Close()
 
 	// 缓存
@@ -243,11 +145,13 @@ func handle_cluster_socket_info(socket *net.UDPConn, index int) {
 }
 
 // 创建本地监听套接字
-func create_local_socket() bool {
+func create_local_socket(listen_addr string) bool {
 	// 创建本地监听套接字
-	listenUdpAddr := &net.UDPAddr{
-		IP:   net.ParseIP(listen_ip),
-		Port: listen_port,
+	listenUdpAddr, err_resolve := net.ResolveUDPAddr("udp", listen_addr)
+
+	if err_resolve != nil {
+		fmt.Println("解析本地监听地址失败:", err_resolve)
+		return false
 	}
 
 	conn, err := net.ListenUDP("udp", listenUdpAddr)
@@ -269,7 +173,7 @@ func create_local_socket() bool {
 }
 
 // 处理本地监听套接字信息
-func handle_local_socket_info() {
+func handle_local_socket_info(mtu int) {
 	defer local_addr_record.Socket.Close()
 
 	// 缓存
@@ -320,38 +224,9 @@ func print_hit_counts() {
 	}
 }
 
-func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_port int, _mtu int, _force_local_ip_list []string, _force_local_port_list []string,
-	_remote_ip_list []string) {
-	target_ip = _target_ip
-	target_port_base = _target_port_base
-	listen_ip = _listen_ip
-	listen_port = _listen_port
-	mtu = _mtu
-
-	if len(_force_local_ip_list) == 0 {
-		// 获取所有活动的网络接口
-		inter_faces_list := get_all_inter_face()
-		if len(inter_faces_list) == 0 {
-			fmt.Println("未找到活动的网络接口。")
-			return
-		}
-
-		// 显示可用的网络接口
-		fmt.Println("可用的网络接口:")
-		for idx, inter := range inter_faces_list {
-			fmt.Printf("%d: %s - %s\n", idx, inter.NAME, inter.IPV4)
-		}
-
-		// 用户选择要使用的接口
-		_force_local_ip_list = select_inter_face(inter_faces_list)
-		if len(_force_local_ip_list) == 0 {
-			fmt.Println("未选择有效的网络接口。")
-			return
-		}
-	}
-
+func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []string, mtu int, mode string) {
 	// 用选择的接口建立udp套接字
-	sockets = create_cluster_socket(_force_local_ip_list, _force_local_port_list, _remote_ip_list)
+	sockets = create_cluster_socket(remote_ip_list, send_ip_list)
 	hit_counts = make([]int, len(sockets))
 
 	for index := range hit_counts {
@@ -360,17 +235,17 @@ func Start(_target_ip string, _target_port_base int, _listen_ip string, _listen_
 
 	// 监听sockets中的套接字接受信息
 	for index, socket := range sockets {
-		go handle_cluster_socket_info(socket, index)
+		go handle_cluster_socket_info(socket, index, mtu)
 	}
 
 	// 创建本地监听套接字
-	if !create_local_socket() {
+	if !create_local_socket(listen_ip_list[0]) {
 		// 创建本地监听套接字失败
 		return
 	}
 
 	// 监听本地套接字
-	go handle_local_socket_info()
+	go handle_local_socket_info(mtu)
 
 	fmt.Printf("程序运行，等待输入\n")
 
