@@ -34,6 +34,9 @@ var (
 
 	// 命中统计锁
 	hit_mutex = sync.Mutex{}
+
+	// 聚合端口发送队列组()
+	send_queue [][][]byte
 )
 
 // 使用传入的字符串地址创建udp套接字
@@ -199,12 +202,9 @@ func handle_local_socket_info(mtu int) {
 		packet := append([]byte(index), buf[:n]...)
 
 		// 通过所有的UDP连接发送数据包
-		for _, udpConn := range sockets {
-			_, err := udpConn.Write(packet)
-			if err != nil {
-				fmt.Println("发送UDP包失败:", err)
-			}
-			// fmt.Printf("数据包转发->%s\n", udpConn.RemoteAddr().String())
+		for index := range sockets {
+			// 将数据包放入发送队列
+			send_queue[index] = append(send_queue[index], packet)
 		}
 	}
 }
@@ -224,18 +224,50 @@ func print_hit_counts() {
 	}
 }
 
+// 发送数据包的线程
+func send_packet_thread(index int) {
+	for {
+		// 判断是否有数据
+		if len(send_queue[index]) == 0 {
+			// 没有数据，等待
+			time.Sleep(1 * time.Microsecond)
+			continue
+		}
+
+		// 发送数据
+		packet := send_queue[index][0]
+		send_queue[index] = send_queue[index][1:]
+
+		// 发送数据
+		_, sendErr := sockets[index].Write(packet)
+
+		if sendErr != nil {
+			fmt.Printf("数据表转发失败，服务端地址：%s\n", sockets[index].RemoteAddr().String())
+		} else {
+			fmt.Printf("数据转发成功，服务端地址：%s\n", sockets[index].RemoteAddr().String())
+		}
+	}
+}
+
 func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []string, mtu int, mode string) {
 	// 用选择的接口建立udp套接字
 	sockets = create_cluster_socket(remote_ip_list, send_ip_list)
 	hit_counts = make([]int, len(sockets))
 
+	// 初始化发送队列数组
+	send_queue = make([][][]byte, len(listen_ip_list))
+
 	for index := range hit_counts {
 		hit_counts[index] = 0
+		send_queue[index] = make([][]byte, 0)
 	}
 
 	// 监听sockets中的套接字接受信息
 	for index, socket := range sockets {
 		go handle_cluster_socket_info(socket, index, mtu)
+
+		// 启动写回线程
+		go send_packet_thread(index)
 	}
 
 	// 创建本地监听套接字
@@ -247,10 +279,10 @@ func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []stri
 	// 监听本地套接字
 	go handle_local_socket_info(mtu)
 
-	fmt.Printf("程序运行，等待输入\n")
-
 	// 统计日志
 	go print_hit_counts()
+
+	fmt.Printf("程序运行，等待输入\n")
 
 	// 阻止主函数退出
 	select {}

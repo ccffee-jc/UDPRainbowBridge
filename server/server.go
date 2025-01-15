@@ -28,6 +28,9 @@ var (
 
 	// 命中统计锁
 	hit_mutex = sync.Mutex{}
+
+	// 监听端口发送队列组()
+	listen_record_send_queue [][][]byte
 )
 
 // 创建监听端口列表
@@ -173,30 +176,9 @@ func handle_remote_socket_info(mtu int) {
 		packet := append([]byte(seq), buffer[:n]...)
 
 		// 发送数据包到所有已记录的客户端
-		for index, clientRecord := range listen_record_sockets {
-			// 判断远端地址是否存在
-			listen_record_add_mutex[index].Lock()
-			if len(clientRecord.Addr) == 0 {
-				// 地址不存在，跳过
-				// fmt.Printf("回传地址不存在，index：%d\n", index)
-				listen_record_add_mutex[index].Unlock()
-				continue
-			}
-
-			addr := clientRecord.Addr
-
-			clientAddr, _ := net.ResolveUDPAddr("udp", clientRecord.Addr)
-			listen_record_add_mutex[index].Unlock()
-
-			// 发送数据
-			_, sendErr := clientRecord.Socket.WriteToUDP(packet, clientAddr)
-
-			if sendErr != nil {
-				fmt.Printf("数据表转发失败，客户端地址：%s\n", addr)
-			} else {
-				fmt.Printf("数据转发成功，客户端地址：%s\n", addr)
-			}
-
+		for index := range listen_record_sockets {
+			// 放入发送队列中
+			listen_record_send_queue[index] = append(listen_record_send_queue[index], packet)
 		}
 	}
 }
@@ -216,14 +198,56 @@ func print_hit_counts() {
 	}
 }
 
+// 发送数据包的线程
+func send_packet_thread(index int) {
+	for {
+		// 判断是否有数据
+		if len(listen_record_send_queue[index]) == 0 {
+			// 没有数据，等待
+			time.Sleep(1 * time.Microsecond)
+			continue
+		}
+
+		// 判断地址是否存在
+		listen_record_add_mutex[index].Lock()
+		if len(listen_record_sockets[index].Addr) == 0 {
+			// 地址不存在，跳过
+			listen_record_add_mutex[index].Unlock()
+			continue
+		}
+
+		addr := listen_record_sockets[index].Addr
+		listen_record_add_mutex[index].Unlock()
+
+		// 发送数据
+		packet := listen_record_send_queue[index][0]
+		listen_record_send_queue[index] = listen_record_send_queue[index][1:]
+
+		addrOb, _ := net.ResolveUDPAddr("udp", addr)
+
+		// 发送数据
+		_, sendErr := listen_record_sockets[index].Socket.WriteToUDP(packet, addrOb)
+
+		if sendErr != nil {
+			fmt.Printf("数据表转发失败，客户端地址：%s\n", addr)
+		} else {
+			fmt.Printf("数据转发成功，客户端地址：%s\n", addr)
+		}
+	}
+}
+
 func Start(remote_ip_list []string, listen_ip_list []string, mtu int, mode string) {
 	// 创建本地监听端口套接字群
 	create_cluster_listen_socket(listen_ip_list)
 
 	hit_counts = make([]int, len(listen_ip_list))
 
+	// 初始化发送队列数组
+	listen_record_send_queue = make([][][]byte, len(listen_ip_list))
+
 	for index := range hit_counts {
 		hit_counts[index] = 0
+		listen_record_send_queue[index] = make([][]byte, 0)
 	}
 
 	// 本地监听端口监听信息
@@ -236,7 +260,11 @@ func Start(remote_ip_list []string, listen_ip_list []string, mtu int, mode strin
 			continue
 		}
 
+		// 启动监听线程
 		go handle_cluster_socket_info(recordSocket, addMutex, i, mtu)
+
+		// 启动写回线程
+		go send_packet_thread(i)
 	}
 
 	// 创建本地转发端口
@@ -245,9 +273,10 @@ func Start(remote_ip_list []string, listen_ip_list []string, mtu int, mode strin
 	// 监听本地端口输入
 	go handle_remote_socket_info(mtu)
 
-	fmt.Println("程序启动，等待客户端接入")
-
+	// 输出命中统计
 	go print_hit_counts()
+
+	fmt.Println("程序启动，等待客户端接入")
 
 	// 阻止主函数退出
 	select {}
