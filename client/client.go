@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"UDPRainbowBridge/utils"
@@ -14,6 +15,8 @@ type InterfaceAddress struct {
 	NAME string
 	IPV4 string
 }
+
+const send_queue_max_len = 1024
 
 // 全局的序列号映射表和互斥锁
 var (
@@ -36,7 +39,10 @@ var (
 	hit_mutex = sync.Mutex{}
 
 	// 聚合端口发送队列组()
-	send_queue [][][]byte
+	send_queue [][send_queue_max_len][]byte
+
+	// 监听顿口发送队列指针列表，第一位代表当前数据位置，第二位代表当前已经发送数据位置
+	send_queue_point_list [][2]int64
 )
 
 // 使用传入的字符串地址创建udp套接字
@@ -204,7 +210,28 @@ func handle_local_socket_info(mtu int) {
 		// 通过所有的UDP连接发送数据包
 		for index := range sockets {
 			// 将数据包放入发送队列
-			send_queue[index] = append(send_queue[index], packet)
+			// 先获取位置
+			next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
+
+			// 判断是否满了（下一个位置是发送位置）(理论上不应该发生)
+			waitCount := 0
+			for {
+				if next_index+1 == atomic.LoadInt64(&send_queue_point_list[index][1]) {
+					// 等待写入
+					time.Sleep(1 * time.Millisecond)
+
+					fmt.Println("发送队列满了，等待写入完成", waitCount)
+					waitCount++
+				} else {
+					break
+				}
+			}
+
+			// 写入数据
+			send_queue[index][next_index] = packet
+			// 坐标后移
+			atomic.StoreInt64(&send_queue_point_list[index][0], (next_index+1)%send_queue_max_len)
+
 		}
 	}
 }
@@ -228,15 +255,17 @@ func print_hit_counts() {
 func send_packet_thread(index int) {
 	for {
 		// 判断是否有数据
-		if len(send_queue[index]) == 0 {
+		if atomic.LoadInt64(&send_queue_point_list[index][0]) == atomic.LoadInt64(&send_queue_point_list[index][1]) {
 			// 没有数据，等待
 			time.Sleep(1 * time.Microsecond)
 			continue
 		}
 
-		// 发送数据
-		packet := send_queue[index][0]
-		send_queue[index] = send_queue[index][1:]
+		// 获取需要发送的数据
+		packet := send_queue[index][atomic.LoadInt64(&send_queue_point_list[index][1])]
+
+		// 指向下一个数据
+		atomic.StoreInt64(&send_queue_point_list[index][1], (send_queue_point_list[index][1]+1)%send_queue_max_len)
 
 		// 发送数据
 		_, sendErr := sockets[index].Write(packet)
@@ -244,7 +273,7 @@ func send_packet_thread(index int) {
 		if sendErr != nil {
 			fmt.Printf("数据表转发失败，服务端地址：%s\n", sockets[index].RemoteAddr().String())
 		} else {
-			fmt.Printf("数据转发成功，服务端地址：%s\n", sockets[index].RemoteAddr().String())
+			// fmt.Printf("数据转发成功，服务端地址：%s\n", sockets[index].RemoteAddr().String())
 		}
 	}
 }
@@ -255,11 +284,13 @@ func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []stri
 	hit_counts = make([]int, len(sockets))
 
 	// 初始化发送队列数组
-	send_queue = make([][][]byte, len(listen_ip_list))
+	send_queue = make([][send_queue_max_len][]byte, len(remote_ip_list))
+	send_queue_point_list = make([][2]int64, len(remote_ip_list))
 
 	for index := range hit_counts {
 		hit_counts[index] = 0
-		send_queue[index] = make([][]byte, 0)
+		send_queue[index] = [send_queue_max_len][]byte{}
+		send_queue_point_list[index] = [2]int64{0, 0}
 	}
 
 	// 监听sockets中的套接字接受信息
