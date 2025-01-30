@@ -1,21 +1,20 @@
 package server
 
 import (
+	"UDPRainbowBridge/core"
 	"fmt"
 	"net"
 	"os"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"UDPRainbowBridge/utils"
 )
 
 const send_queue_max_len = 1024
 
 var (
 	// 监听端口组
-	listen_record_sockets []*utils.RecordSocket
+	listen_record_sockets []*core.RecordSocket
 
 	// 监听端口组对应的地址锁
 	listen_record_add_mutex []*sync.Mutex
@@ -42,7 +41,7 @@ var (
 // 创建监听端口列表
 func create_cluster_listen_socket(listen_ip_list []string) {
 	// 初始化数组
-	listen_record_sockets = make([]*utils.RecordSocket, len(listen_ip_list))
+	listen_record_sockets = make([]*core.RecordSocket, len(listen_ip_list))
 	listen_record_add_mutex = make([]*sync.Mutex, len(listen_ip_list))
 
 	// 循环最大监听数量次数，监听对应端口
@@ -62,7 +61,7 @@ func create_cluster_listen_socket(listen_ip_list []string) {
 			continue
 		}
 
-		listen_record_sockets[i] = &utils.RecordSocket{
+		listen_record_sockets[i] = &core.RecordSocket{
 			Socket: conn,
 			Addr:   "",
 		}
@@ -73,7 +72,7 @@ func create_cluster_listen_socket(listen_ip_list []string) {
 	}
 }
 
-func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync.Mutex, index int, mtu int) {
+func handle_cluster_socket_info(recordSocket *core.RecordSocket, addMutex *sync.Mutex, index int, mtu int) {
 	defer recordSocket.Socket.Close()
 
 	// 缓存
@@ -104,7 +103,7 @@ func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync
 		// 判断序列号是否有效
 		listen_record_index_mutex.Lock()
 		// fmt.Println("测试序列号:", seq)
-		if !utils.IndexIsValid(seq) {
+		if !core.IndexIsValid(seq) {
 			// fmt.Println("序列号无效:", seq)
 			listen_record_index_mutex.Unlock()
 			continue
@@ -113,7 +112,7 @@ func handle_cluster_socket_info(recordSocket *utils.RecordSocket, addMutex *sync
 		// fmt.Println("！！有效序列号:", seq)
 
 		// 记录包序号
-		utils.RecordIndex(seq)
+		core.RecordIndex(seq)
 
 		// 释放锁
 		listen_record_index_mutex.Unlock()
@@ -175,7 +174,7 @@ func handle_remote_socket_info(mtu int) {
 
 		// 生成序号
 		listen_record_index_mutex.Lock()
-		seq := utils.GetIndex()
+		seq := core.GetIndex()
 		listen_record_index_mutex.Unlock()
 
 		// 添加序列号
@@ -183,6 +182,7 @@ func handle_remote_socket_info(mtu int) {
 
 		// 发送数据包到所有已记录的客户端
 		for index := range listen_record_sockets {
+
 			// 放入发送队列中
 			// 先获取位置
 			next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
@@ -221,6 +221,7 @@ func print_hit_counts() {
 			hit_counts[index] = 0
 		}
 		hit_mutex.Unlock()
+
 	}
 }
 
@@ -230,7 +231,7 @@ func send_packet_thread(index int) {
 		// 判断是否有数据
 		if atomic.LoadInt64(&send_queue_point_list[index][0]) == atomic.LoadInt64(&send_queue_point_list[index][1]) {
 			// 没有数据，等待
-			time.Sleep(1 * time.Microsecond)
+			time.Sleep(1 * time.Millisecond)
 			continue
 		}
 

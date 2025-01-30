@@ -1,13 +1,12 @@
 package client
 
 import (
+	"UDPRainbowBridge/core"
 	"fmt"
 	"net"
 	"sync"
 	"sync/atomic"
 	"time"
-
-	"UDPRainbowBridge/utils"
 )
 
 // InterfaceAddress 用于存储网络接口的名称和IPv4地址
@@ -27,7 +26,7 @@ var (
 	addr_mutex = sync.Mutex{}
 
 	// 本地监听套接字与对端端口结构体
-	local_addr_record *utils.RecordSocket
+	local_addr_record *core.RecordSocket
 
 	// 聚合连接
 	sockets []*net.UDPConn
@@ -105,14 +104,14 @@ func handle_cluster_socket_info(socket *net.UDPConn, index int, mtu int) {
 
 		// 判断序列号是否有效
 		index_mutex.Lock()
-		if !utils.IndexIsValid(seq) {
+		if !core.IndexIsValid(seq) {
 			// fmt.Println("序列号无效:", seq)
 			index_mutex.Unlock()
 			continue
 		}
 
 		// 记录包序号
-		utils.RecordIndex(seq)
+		core.RecordIndex(seq)
 
 		// 释放锁
 		index_mutex.Unlock()
@@ -166,7 +165,7 @@ func create_local_socket(listen_addr string) bool {
 	conn, err := net.ListenUDP("udp", listenUdpAddr)
 
 	// 创建RecordSocket结构体
-	local_addr_record = &utils.RecordSocket{
+	local_addr_record = &core.RecordSocket{
 		Socket: conn,
 		Addr:   "",
 	}
@@ -202,7 +201,7 @@ func handle_local_socket_info(mtu int) {
 		addr_mutex.Unlock()
 
 		// 增加包序号
-		index := utils.GetIndex()
+		index := core.GetIndex()
 
 		// 添加序列号
 		packet := append([]byte(index), buf[:n]...)
@@ -257,7 +256,7 @@ func send_packet_thread(index int) {
 		// 判断是否有数据
 		if atomic.LoadInt64(&send_queue_point_list[index][0]) == atomic.LoadInt64(&send_queue_point_list[index][1]) {
 			// 没有数据，等待
-			time.Sleep(1 * time.Microsecond)
+			time.Sleep(1 * time.Millisecond)
 			continue
 		}
 
@@ -280,6 +279,9 @@ func send_packet_thread(index int) {
 
 func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []string, mtu int, mode string) {
 	// 用选择的接口建立udp套接字
+	for index, addr := range remote_ip_list {
+		fmt.Printf("远程地址%d: %s\n", index, addr)
+	}
 	sockets = create_cluster_socket(remote_ip_list, send_ip_list)
 	hit_counts = make([]int, len(sockets))
 
