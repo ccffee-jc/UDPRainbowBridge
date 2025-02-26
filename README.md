@@ -1,45 +1,22 @@
 # UDPRainbowBridge
 
-UDPRainbowBridge is a UDP-based networking project written in Go. 
+此项目是一个基于GO语言编写的多网卡多倍发包/链路聚合工具。
 
-
-## Build Instructions
-
-### Windows (Using build.bat)
-Open a command prompt and run:
-
-```bat
-build.bat
-```
-
-The script builds binaries for multiple platforms and stores them in the `out` directory.
-
+与基于udp协议的vpn（例如wireguard）配合使用可实现全流量多倍发包/链路聚合。
 
 ## Usage
-
-### Server Mode
-
-Run the server mode by specifying the `-s` flag along with necessary addresses. Example:
-
+使用方式如下
 ```sh
-go run main.go -s -r 192.168.2.3:8080 -l 0.0.0.0:9000
+  -c    客户端模式
+  -l string
+        监听地址 服务端此参数有多个，客户端单个 参数值示例：0.0.0.0:9000;0.0.0.0:90001:192.168.2.3:9002
+  -mode string
+        mode1: 多倍发包模式，mode2: 链路聚合模式 (default "mode1")
+  -mtu int
+        可选，mtu，最大包体支持，默认：1492 (default 1492)
+  -r string
+        转发地址 服务端此参数只能有一个地址，客户端多个 参数值示例：192.168.2.3:8080;192.168.2.110:8080
+  -s    服务端模式
+  -send string
+        发送地址 客户端用 参数值192.168.100.1:0;192.168.99.1:0  自动选择发送端口请指定端口为0！！
 ```
-
-- **-s**: Run in server mode.
-- **-r**: Remote address (only one address for server mode).
-- **-l**: Listening addresses (multiple allowed for server mode).
-
-### Client Mode
-
-Run the client mode by specifying the `-c` flag and providing the sending and listening addresses. Example:
-
-```sh
-go run main.go -c -r 192.168.2.3:8080;192.168.2.110:8080 -l 0.0.0.0:9000 -send 192.168.100.1:0;192.168.99.1:0
-```
-
-- **-c**: Run in client mode.
-- **-r**: Remote addresses (multiple are allowed separated by semicolons).
-- **-l**: Listening address (single allowed for client mode).
-- **-send**: Local sending addresses (use port 0 for auto-selection).
-
-
