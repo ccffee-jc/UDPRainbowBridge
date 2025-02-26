@@ -24,10 +24,10 @@ func main() {
 	// -s 服务端模式
 	// -c 客户端模式
 	// -m mtu值设置
-	// -mode 模式选择 mode1: 多倍发包模式，mode2: 自动选择线路模式，mode3:链路聚合模式
+	// -mode 模式选择 mode1: 多倍发包模式，mode2:链路聚合模式
 	flag.BoolVar(&s, "s", false, "服务端模式")
 	flag.BoolVar(&c, "c", false, "客户端模式")
-	flag.StringVar(&mode, "mode", "mode1", "mode1: 多倍发包模式，mode2: 自动选择线路模式，mode3:链路聚合模式")
+	flag.StringVar(&mode, "mode", "mode1", "mode1: 多倍发包模式，mode2:链路聚合模式")
 	flag.IntVar(&m, "mtu", 1492, "可选，mtu，最大包体支持，默认：1492")
 
 	flag.StringVar(&r, "r", "", "转发地址 服务端此参数只能有一个地址，客户端多个 参数值示例：192.168.2.3:8080;192.168.2.110:8080")

@@ -42,6 +42,9 @@ var (
 
 	// 监听顿口发送队列指针列表，第一位代表当前数据位置，第二位代表当前已经发送数据位置
 	send_queue_point_list [][2]int64
+
+	// 模式
+	mode string
 )
 
 // 使用传入的字符串地址创建udp套接字
@@ -187,6 +190,8 @@ func handle_local_socket_info(mtu int) {
 	// 缓存
 	buf := make([]byte, mtu)
 
+	sendIndex := 0
+
 	// 循环读取数据
 	for {
 		n, addr, err := local_addr_record.Socket.ReadFromUDP(buf)
@@ -206,16 +211,44 @@ func handle_local_socket_info(mtu int) {
 		// 添加序列号
 		packet := append([]byte(index), buf[:n]...)
 
-		// 通过所有的UDP连接发送数据包
-		for index := range sockets {
-			// 将数据包放入发送队列
+		if mode == "mode1" {
+			// 多倍发包模式
+			// 通过所有的UDP连接发送数据包
+			for index := range sockets {
+				// 将数据包放入发送队列
+				// 先获取位置
+				next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
+
+				// 判断是否满了（下一个位置是发送位置）(理论上不应该发生)
+				waitCount := 0
+				for {
+					if next_index+1 == atomic.LoadInt64(&send_queue_point_list[index][1]) {
+						// 等待写入
+						time.Sleep(1 * time.Millisecond)
+
+						fmt.Println("发送队列满了，等待写入完成", waitCount)
+						waitCount++
+					} else {
+						break
+					}
+				}
+
+				// 写入数据
+				send_queue[index][next_index] = packet
+				// 坐标后移
+				atomic.StoreInt64(&send_queue_point_list[index][0], (next_index+1)%send_queue_max_len)
+
+			}
+		} else if mode == "mode2" {
+			// 链路聚合模式
+			// 按顺序进行发包
 			// 先获取位置
-			next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
+			next_index := atomic.LoadInt64(&send_queue_point_list[sendIndex][0])
 
 			// 判断是否满了（下一个位置是发送位置）(理论上不应该发生)
 			waitCount := 0
 			for {
-				if next_index+1 == atomic.LoadInt64(&send_queue_point_list[index][1]) {
+				if next_index+1 == atomic.LoadInt64(&send_queue_point_list[sendIndex][1]) {
 					// 等待写入
 					time.Sleep(1 * time.Millisecond)
 
@@ -227,11 +260,14 @@ func handle_local_socket_info(mtu int) {
 			}
 
 			// 写入数据
-			send_queue[index][next_index] = packet
+			send_queue[sendIndex][next_index] = packet
 			// 坐标后移
-			atomic.StoreInt64(&send_queue_point_list[index][0], (next_index+1)%send_queue_max_len)
+			atomic.StoreInt64(&send_queue_point_list[sendIndex][0], (next_index+1)%send_queue_max_len)
 
+			// sendIndex++
+			sendIndex = (sendIndex + 1) % len(sockets)
 		}
+
 	}
 }
 
@@ -277,7 +313,9 @@ func send_packet_thread(index int) {
 	}
 }
 
-func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []string, mtu int, mode string) {
+func Start(remote_ip_list []string, listen_ip_list []string, send_ip_list []string, mtu int, m string) {
+	mode = m
+
 	// 用选择的接口建立udp套接字
 	for index, addr := range remote_ip_list {
 		fmt.Printf("远程地址%d: %s\n", index, addr)

@@ -36,6 +36,9 @@ var (
 
 	// 监听顿口发送队列指针列表，第一位代表当前数据位置，第二位代表当前已经发送数据位置
 	send_queue_point_list [][2]int64
+
+	// 运行模式
+	mode string
 )
 
 // 创建监听端口列表
@@ -162,6 +165,8 @@ func create_remote_socket(addr string) {
 func handle_remote_socket_info(mtu int) {
 	buffer := make([]byte, mtu)
 
+	sendIndex := 0
+
 	for {
 		n, _, err := remote_con_socket.ReadFromUDP(buffer)
 
@@ -180,17 +185,44 @@ func handle_remote_socket_info(mtu int) {
 		// 添加序列号
 		packet := append([]byte(seq), buffer[:n]...)
 
-		// 发送数据包到所有已记录的客户端
-		for index := range listen_record_sockets {
+		if mode == "mode1" {
+			// 多倍发包模式
+			// 发送数据包到所有已记录的客户端
+			for index := range listen_record_sockets {
 
-			// 放入发送队列中
+				// 放入发送队列中
+				// 先获取位置
+				next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
+
+				// 判断是否满了（下一个位置是发送位置）(理论上不应该发生)
+				waitCount := 0
+				for {
+					if next_index+1 == atomic.LoadInt64(&send_queue_point_list[index][1]) {
+						// 等待写入
+						time.Sleep(1 * time.Millisecond)
+
+						fmt.Println("发送队列满了，等待写入完成", waitCount)
+						waitCount++
+					} else {
+						break
+					}
+				}
+
+				// 写入数据
+				listen_record_send_queue[index][next_index] = packet
+				// 坐标后移
+				atomic.StoreInt64(&send_queue_point_list[index][0], (next_index+1)%send_queue_max_len)
+			}
+		} else if mode == "mode2" {
+			// 链路聚合模式
+			// 按顺序进行发包
 			// 先获取位置
-			next_index := atomic.LoadInt64(&send_queue_point_list[index][0])
+			next_index := atomic.LoadInt64(&send_queue_point_list[sendIndex][0])
 
 			// 判断是否满了（下一个位置是发送位置）(理论上不应该发生)
 			waitCount := 0
 			for {
-				if next_index+1 == atomic.LoadInt64(&send_queue_point_list[index][1]) {
+				if next_index+1 == atomic.LoadInt64(&send_queue_point_list[sendIndex][1]) {
 					// 等待写入
 					time.Sleep(1 * time.Millisecond)
 
@@ -202,10 +234,14 @@ func handle_remote_socket_info(mtu int) {
 			}
 
 			// 写入数据
-			listen_record_send_queue[index][next_index] = packet
+			listen_record_send_queue[sendIndex][next_index] = packet
 			// 坐标后移
-			atomic.StoreInt64(&send_queue_point_list[index][0], (next_index+1)%send_queue_max_len)
+			atomic.StoreInt64(&send_queue_point_list[sendIndex][0], (next_index+1)%send_queue_max_len)
+
+			// sendIndex++
+			sendIndex = (sendIndex + 1) % len(listen_record_sockets)
 		}
+
 	}
 }
 
@@ -265,7 +301,9 @@ func send_packet_thread(index int) {
 	}
 }
 
-func Start(remote_ip_list []string, listen_ip_list []string, mtu int, mode string) {
+func Start(remote_ip_list []string, listen_ip_list []string, mtu int, m string) {
+	mode = m
+
 	// 创建本地监听端口套接字群
 	create_cluster_listen_socket(listen_ip_list)
 
