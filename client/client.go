@@ -276,10 +276,16 @@ func print_hit_counts() {
 		// 间隔五秒输出一次
 		time.Sleep(5 * time.Second)
 
+		// 获取总数
+		total := 0
+		for _, count := range hit_counts {
+			total += count
+		}
+
 		// 输出统计信息
 		hit_mutex.Lock()
 		for index, count := range hit_counts {
-			fmt.Printf("套接字 %d 命中包数量: %d\n", index, count)
+			fmt.Printf("套接字 %d 命中包数量: %d%\n", index, count / total * 100)
 			hit_counts[index] = 0
 		}
 		hit_mutex.Unlock()
