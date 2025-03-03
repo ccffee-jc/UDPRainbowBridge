@@ -256,10 +256,16 @@ func print_hit_counts() {
 			total += count
 		}
 
+		if total == 0 {
+			continue
+		}
+
+		fmt.Printf("---------------总命中包数量: %d----------------------\n", total)
+
 		// 输出统计信息
 		hit_mutex.Lock()
 		for index, count := range hit_counts {
-			fmt.Printf("套接字 %d 命中包数量: %d%\n", index, count)
+			fmt.Printf("套接字 %d 命中包数量: %d%%\n", index, count * 100 / total )
 			hit_counts[index] = 0
 		}
 		hit_mutex.Unlock()
